@@ -61,6 +61,14 @@ export const T = {
     'Hubspace e-mailed you a verification code: type it under "Verify the code" in this configuration screen. No code received? "Send the verification code" asks for a new one.',
     'Hubspace vous a envoyé un code de vérification par e-mail : saisissez-le sous « Vérifier le code » dans cet écran de configuration. Pas de code reçu ? « Envoyer le code de vérification » en demande un nouveau.',
   ),
+  signedOut: both(
+    'Not signed in to Hubspace: click "Test the connection" to sign in (Hubspace may then e-mail you a code). The integration never signs in by itself.',
+    "Non connecté à Hubspace : cliquez sur « Tester la connexion » pour vous connecter (Hubspace peut alors vous envoyer un code par e-mail). L'intégration ne se connecte jamais d'elle-même.",
+  ),
+  expired: both(
+    'The Hubspace session expired (renewal refused): click "Test the connection" to sign in again (Hubspace may then e-mail you a code). Nothing is retried by itself.',
+    "La session Hubspace a expiré (renouvellement refusé) : cliquez sur « Tester la connexion » pour vous reconnecter (Hubspace peut alors vous envoyer un code par e-mail). Rien n'est réessayé de lui-même.",
+  ),
   sessionRefused: (wait) =>
     both(
       `Hubspace refused the session again right after renewing it: the integration paused. New try in ${wait.en}, or click "Test the connection".`,
@@ -148,6 +156,8 @@ export const COMMAND = {
   blocked: 'Hubspace is not connected: see the integration status',
   paused: 'Hubspace asked to slow down: commands paused, try again later',
   late: 'Hubspace is slow: the command was not sent (Gladys waits 5 seconds)',
+  unconfirmed:
+    'The command was sent but Hubspace did not answer: check the state of the device (read again in a few seconds)',
   unlockOff: 'Unlocking is off: turn on "Allow unlocking" in the configuration',
   valveOff: 'Valve commands are off: turn on "Allow the water valves" in the configuration',
   unavailable: 'The device is offline for Hubspace: nothing sent',

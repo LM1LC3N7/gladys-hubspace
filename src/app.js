@@ -12,7 +12,7 @@ import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sd
 import { HubspaceClient } from './client.js';
 import { normalizeConfig } from './config.js';
 import { LIMITS, TIMINGS } from './constants.js';
-import { buildDevice, deviceIds, deviceStates, planOf } from './devices.js';
+import { buildDevice, deviceIds, deviceStates, layoutOf, planOf } from './devices.js';
 import { AferoError, errorReason } from './http.js';
 import { COMMAND, T, age, join } from './i18n.js';
 import { availableOf, keyOf, readDevices, withStates } from './model.js';
@@ -27,9 +27,25 @@ const BLOCKED = {
   no_credentials: 'refused',
   login_rejected: 'login_rejected',
   two_factor: 'two_factor',
+  expired: 'expired',
+  signed_out: 'signed_out',
 };
-/** The stops kept in /data (the code wait lives in the pending sign-in). */
-const PERSISTED = new Set(['refused', 'login_rejected', 'session_refused']);
+/** The status message of each stop. */
+const STOP_MESSAGES = {
+  refused: T.refused,
+  login_rejected: T.loginRejected,
+  two_factor: T.twoFactor,
+  expired: T.expired,
+  signed_out: T.signedOut,
+};
+/** The stops kept in /data ("signed out" is the absence of a refresh token). */
+const PERSISTED = new Set([
+  'refused',
+  'login_rejected',
+  'session_refused',
+  'expired',
+  'two_factor',
+]);
 /** The fields of a Gladys feature that a publication carries. */
 const FEATURE_FIELDS = [
   'name',
@@ -100,7 +116,11 @@ export class HubspaceApp {
 
   // --- Lifecycle -------------------------------------------------------------
 
-  async start(raw = {}) {
+  /**
+   * `login`: the user has just saved new credentials, so the password may be
+   * posted once now. Otherwise it never is (no e-mailed code without a click).
+   */
+  async start(raw = {}, { login = false } = {}) {
     this.stop();
     await this.running;
     this.config = normalizeConfig(raw);
@@ -115,13 +135,18 @@ export class HubspaceApp {
       this.pausedUntil = this.memory.rateLimitedUntil;
       this.pauseKind = 'rate';
     }
+    if (this.memory.forbiddenUntil > Math.max(this.now(), this.pausedUntil)) {
+      this.pausedUntil = this.memory.forbiddenUntil;
+      this.pauseKind = 'forbidden';
+      this.offline = true;
+    }
     const { email, password, account } = this.config;
     const mine = (entry) => (entry && entry.account === account ? entry : null);
     const session = mine(this.memory.session);
     this.client.configure({
       email,
       password,
-      tokens: session?.tokens ?? null,
+      tokens: session ? { refresh: session.refresh, bearer: null, expiresAt: 0 } : null,
       accountId: session?.accountId,
       pending: mine(this.memory.pending),
     });
@@ -137,7 +162,7 @@ export class HubspaceApp {
       this.retryAt = block.retryAt ?? 0;
       this.sessionRetries = block.retries;
       if (block.kind !== 'session_refused') {
-        await this.setStatus(false, block.kind === 'refused' ? T.refused : T.loginRejected);
+        await this.setStatus(false, STOP_MESSAGES[block.kind]);
         return;
       }
     }
@@ -147,12 +172,18 @@ export class HubspaceApp {
       await this.setStatus(false, T.twoFactor);
       return;
     }
+    if (!this.client.tokens && !login) {
+      // Never a password post from a start, a reconnection or a cycle.
+      this.blocked = 'signed_out';
+      await this.setStatus(false, T.signedOut);
+      return;
+    }
     const waiting =
       this.blocked === 'session_refused' && this.retryAt > this.now()
         ? T.sessionRefused(age(this.retryAt - this.now()))
         : undefined;
     await this.setStatus(false, waiting ?? this.pauseMessage() ?? T.connecting);
-    await this.tick();
+    await this.tick({ login });
   }
 
   stop() {
@@ -183,7 +214,7 @@ export class HubspaceApp {
     this.offline = false;
     this.connectedOnce = false;
     this.failures = 0;
-    if (this.pauseKind !== 'rate' || this.now() >= this.pausedUntil) {
+    if (!['rate', 'forbidden'].includes(this.pauseKind) || this.now() >= this.pausedUntil) {
       this.pausedUntil = 0;
       this.pauseKind = undefined;
     }
@@ -222,7 +253,8 @@ export class HubspaceApp {
     const next = normalizeConfig(raw);
     const previous = this.config;
     if (next.email !== previous.email || next.password !== previous.password) {
-      return this.start(raw);
+      // New credentials typed by the user: one sign-in now.
+      return this.start(raw, { login: true });
     }
     this.config = next;
     if (next.pollInterval !== previous.pollInterval && this.timer) {
@@ -254,12 +286,24 @@ export class HubspaceApp {
       .catch((err) => this.logger.warn(`Saving the state to /data failed: ${err.message}`));
   }
 
-  /** The tokens, the account id and the waiting sign-in of the client, with their account. */
+  /**
+   * The refresh token, the account id and the waiting sign-in of the client,
+   * with their account; written only when one of them changed (the bearer
+   * lives in memory only).
+   */
   async persist() {
     const { account } = this.config;
     const { tokens, accountId, pending } = this.client;
-    this.memory.session = tokens ? { account, tokens, accountId } : null;
-    this.memory.pending = pending ? { account, ...pending } : null;
+    const session = tokens ? { account, refresh: tokens.refresh, accountId } : null;
+    const waiting = pending ? { account, ...pending } : null;
+    if (
+      JSON.stringify(session) === JSON.stringify(this.memory.session) &&
+      JSON.stringify(waiting) === JSON.stringify(this.memory.pending)
+    ) {
+      return;
+    }
+    this.memory.session = session;
+    this.memory.pending = waiting;
     await this.saveMemory();
   }
 
@@ -288,7 +332,8 @@ export class HubspaceApp {
 
   // --- Polling ---------------------------------------------------------------
 
-  scheduleNext() {
+  /** `soon`: read again after this delay (a command to confirm), unless stopped or paused. */
+  scheduleNext(soon) {
     this.clearTimer();
     if (!this.client.hasCredentials) {
       return;
@@ -302,7 +347,7 @@ export class HubspaceApp {
     } else if (now < this.pausedUntil) {
       delay = this.pausedUntil - now;
     } else {
-      delay = this.config.pollInterval * 1000;
+      delay = Math.min(soon ?? Infinity, this.config.pollInterval * 1000);
     }
     const generation = this.generation;
     this.timer = this.timers.setTimeout(
@@ -316,17 +361,20 @@ export class HubspaceApp {
     );
   }
 
-  /** One run at a time: a tick during a run joins it. `quick`: for a button. */
-  tick({ quick = false } = {}) {
+  /**
+   * One run at a time: a tick during a run joins it. `quick`: for a button;
+   * `login`: a user action, the password may be posted (once).
+   */
+  tick({ quick = false, login = false } = {}) {
     if (!this.running) {
-      this.running = this.run({ quick }).finally(() => {
+      this.running = this.run({ quick, login }).finally(() => {
         this.running = undefined;
       });
     }
     return this.running;
   }
 
-  async run({ quick = false } = {}) {
+  async run({ quick = false, login = false } = {}) {
     const generation = this.generation;
     const now = this.now();
     if (!this.client.hasCredentials) {
@@ -343,7 +391,7 @@ export class HubspaceApp {
     this.client.beginCycle();
     this.client.timeout = quick ? TIMINGS.quickTimeout : undefined;
     try {
-      const list = await this.client.devices();
+      const list = await this.client.devices({ allowLogin: login });
       if (generation !== this.generation) {
         return;
       }
@@ -370,7 +418,7 @@ export class HubspaceApp {
     }
   }
 
-  /** A 429 or a 403 of the sign-in host: a pause of every path, kept in /data for a 429. */
+  /** A 429 or a 403 block: a pause of every path, kept in /data. */
   async pause(err) {
     let wait;
     if (err.kind === 'rate_limited') {
@@ -387,8 +435,10 @@ export class HubspaceApp {
     this.pausedUntil = Math.max(this.pausedUntil, this.now() + wait);
     if (this.pauseKind === 'rate') {
       this.memory.rateLimitedUntil = this.pausedUntil;
-      await this.saveMemory();
+    } else {
+      this.memory.forbiddenUntil = this.pausedUntil;
     }
+    await this.saveMemory();
     return wait;
   }
 
@@ -402,13 +452,7 @@ export class HubspaceApp {
       this.clearTimer();
       await this.saveBlock();
       this.logger.warn(`Hubspace stopped: ${reason}`);
-      const message =
-        blocked === 'refused'
-          ? T.refused
-          : blocked === 'login_rejected'
-            ? T.loginRejected
-            : T.twoFactor;
-      await this.setStatus(false, message);
+      await this.setStatus(false, STOP_MESSAGES[blocked]);
       return;
     }
     if (err.kind === 'session_refused') {
@@ -460,13 +504,15 @@ export class HubspaceApp {
   rebuild() {
     this.plans = new Map();
     this.writers = new Map();
+    const created = this.createdDevices();
     for (const device of this.devices.values()) {
-      const plan = planOf(device);
+      const ids = deviceIds(this.gladys, device.id);
+      // A light keeps the zone layout it was created with.
+      const plan = planOf(device, { layout: layoutOf(created.get(ids.device)) });
       if (!plan) {
         continue;
       }
       this.plans.set(device.id, plan);
-      const ids = deviceIds(this.gladys, device.id);
       for (const spec of plan.specs) {
         if (spec.write || spec.sensitive) {
           this.writers.set(ids.feature(spec.key), { deviceId: device.id, spec });
@@ -673,22 +719,22 @@ export class HubspaceApp {
     if (left() < TIMINGS.commandMinimum) {
       throw commandError(COMMAND.late);
     }
-    let device = this.devices.get(deviceId);
+    const device = this.devices.get(deviceId);
     if (!device) {
       throw commandError(COMMAND.unknown);
     }
     let result;
     try {
       if (spec.sensitive) {
-        // Never decided on a state in memory: read it now.
+        // Never decided on a state in memory: read it now, and decide on
+        // that read only (a state it does not carry is unknown).
         const states = await this.client.deviceState(deviceId, {
-          allowLogin: false,
-          timeout: Math.max(1, left() - TIMINGS.commandMinimum),
+          deadline: deadline - TIMINGS.commandMinimum,
         });
-        device = withStates(this.devices.get(deviceId) ?? device, states);
-        this.devices.set(deviceId, device);
+        const fresh = withStates({ ...device, states: new Map() }, states);
+        this.devices.set(deviceId, withStates(this.devices.get(deviceId) ?? device, states));
         this.queueStates(undefined, deviceId);
-        result = spec.sensitive.prepare(device);
+        result = spec.sensitive.prepare(fresh);
       } else {
         result = spec.write(number, device);
       }
@@ -703,11 +749,12 @@ export class HubspaceApp {
       }
       const stamp = this.now();
       const values = result.map((v) => ({ ...v, lastUpdateTime: stamp }));
-      const answer = await this.client.setState(deviceId, values, {
-        allowLogin: false,
-        timeout: Math.max(1, left()),
-      });
+      const answer = await this.client.setState(deviceId, values, { deadline });
       this.confirm(deviceId, values, answer);
+      if (spec.sensitive) {
+        // A lock or a valve moves: its end state is read soon, not in a minute.
+        this.scheduleNext(TIMINGS.confirmRead);
+      }
     } catch (err) {
       throw await this.commandFailure(err);
     }
@@ -729,13 +776,16 @@ export class HubspaceApp {
     );
     this.queueStates(undefined, deviceId);
     // Set after the confirmed values are queued: they are the expected ones.
+    // Never on a transient value (a lock moving): the read of its end wins.
+    const ids = deviceIds(this.gladys, deviceId);
+    const transient = new Map(plan.specs.map((s) => [ids.feature(s.key), s.transient ?? []]));
     const until = this.now() + TIMINGS.commandHold;
     for (const { device_feature_external_id: id, state } of deviceStates(
       this.gladys,
       after,
       plan,
     )) {
-      if (old.get(id) !== state) {
+      if (old.get(id) !== state && !transient.get(id)?.includes(state)) {
         this.holds.set(id, { expected: state, until });
       }
     }
@@ -746,19 +796,32 @@ export class HubspaceApp {
     if (!(err instanceof AferoError)) {
       return err;
     }
+    if (err.sent) {
+      // The write left without an answer: it may have been done. Read soon.
+      this.logger.warn(`Hubspace command sent without confirmation: ${errorReason(err)}`);
+      this.scheduleNext(TIMINGS.confirmRead);
+      return commandError(COMMAND.unconfirmed);
+    }
     this.logger.warn(`Hubspace command not done: ${errorReason(err)}`);
     switch (err.kind) {
       case 'rate_limited':
         await this.pause(err);
         await this.setStatus(this.connectedOnce, T.rateLimited(age(this.pausedUntil - this.now())));
         return commandError(COMMAND.paused);
+      case 'forbidden':
+        await this.pause(err);
+        await this.setStatus(false, T.forbidden(age(this.pausedUntil - this.now())));
+        return commandError(COMMAND.paused);
       case 'invalid_command':
         return commandError(COMMAND.refused);
+      case 'late':
       case 'timeout':
         return commandError(COMMAND.late);
       case 'unauthorized':
       case 'session_refused':
       case 'token_refused':
+      case 'expired':
+      case 'signed_out':
         return commandError(COMMAND.blocked);
       default:
         return commandError(`Hubspace: ${errorReason(err)}`);
@@ -803,7 +866,8 @@ export class HubspaceApp {
     this.pausedUntil = 0;
     this.pauseKind = undefined;
     await this.saveBlock();
-    await this.tick({ quick: true });
+    // A click of the user: the password may be posted once if no session works.
+    await this.tick({ quick: true, login: true });
     return this.lastMessage ?? T.noCredentials;
   }
 

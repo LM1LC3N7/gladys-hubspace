@@ -12,6 +12,7 @@ import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { HubspaceApp } from '../src/app.js';
 import { accountKey } from '../src/config.js';
 import { ACTIONS } from '../src/constants.js';
+import { AferoError } from '../src/http.js';
 import { registerHandlers } from '../src/handlers.js';
 import {
   ACCOUNT_ID,
@@ -39,6 +40,8 @@ async function setup(
     now = NOW,
     create = true,
     logs = [],
+    // A first install: the user clicks "Test the connection" to sign in (never automatic).
+    signIn = store.data === null,
   } = {},
 ) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now });
@@ -54,6 +57,11 @@ async function setup(
   await gladys.connect();
   await settle();
   t.after(() => app.stop());
+  if (signIn && config.email && config.password) {
+    assert.equal(server.requests.length, 0, 'nothing posted before the click');
+    await gladys.fake.action(ACTIONS.TEST_CONNECTION);
+    await settle();
+  }
   const advance = async (ms, step = 5 * SECOND) => {
     for (let elapsed = 0; elapsed < ms; elapsed += step) {
       t.mock.timers.tick(Math.min(step, ms - elapsed));
@@ -225,13 +233,67 @@ test('a restart reuses the stored tokens: no new sign-in', async (t) => {
   assert.equal(server.of('/v1/users/me').length, 1, 'the account id is kept too');
 });
 
-test('a dead refresh token signs in again with the password, once', async (t) => {
-  const { server, advance, gladys } = await setup(t);
+test('a dead refresh token stops (never a password post without a click), across restarts', async (t) => {
+  const store = memoryStore();
+  const server = fakeAfero({ otp: false });
+  const first = await setup(t, { store, server });
   server.revokeBearers();
   server.revokeRefresh();
-  await advance(3 * MINUTE);
+  await first.advance(3 * MINUTE);
+  assert.equal(server.logins().length, 1, 'no password posted by itself');
+  assert.equal(first.gladys.fake.connectionStatus.connected, false);
+  assert.match(message(first.gladys).en, /session expired.*Test the connection/);
+  assert.equal(store.data.block.kind, 'expired');
+  const reads = server.requests.length;
+  await first.advance(30 * MINUTE, MINUTE);
+  assert.equal(server.requests.length, reads, 'nothing retried by itself');
+  first.app.stop();
+  t.mock.timers.reset();
+  const second = await setup(t, { store, server, create: false });
+  assert.equal(server.requests.length, reads, 'nor after a restart');
+  assert.match(message(second.gladys).fr, /session Hubspace a expiré/);
+  // The click signs in once.
+  await second.gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  await settle();
   assert.equal(server.logins().length, 2);
-  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(second.gladys.fake.connectionStatus.connected, true);
+  assert.equal(store.data.block, null);
+});
+
+test('a start without a session posts nothing: it waits for the click', async (t) => {
+  const server = fakeAfero({ otp: true });
+  const { gladys } = await setup(t, { server, signIn: false, create: false });
+  assert.equal(server.requests.length, 0);
+  assert.equal(server.emails, 0);
+  assert.match(message(gladys).en, /Not signed in to Hubspace/);
+  // A reconnection to Gladys does not sign in either.
+  await gladys.disconnect();
+  await gladys.connect();
+  await settle();
+  assert.equal(server.requests.length, 0);
+  // New credentials saved by the user: one sign-in at once.
+  await gladys.fake.configUpdated({ email: EMAIL, password: PASSWORD, poll_interval: 30 });
+  await settle();
+  assert.equal(server.requests.length, 0, 'same credentials: still nothing');
+  server.password = 'a new password';
+  await gladys.fake.configUpdated({ email: EMAIL, password: 'a new password' });
+  await settle();
+  assert.equal(server.logins().length, 1);
+  assert.equal(server.emails, 1, 'Hubspace e-mails the code after the user saved');
+});
+
+test('a sign-in without an answer is never posted again by itself', async (t) => {
+  const server = fakeAfero();
+  server.queue.push({
+    match: (r) => r.path.endsWith('/login-actions/authenticate'),
+    status: 503,
+    body: '',
+  });
+  const { gladys, advance } = await setup(t, { server, create: false });
+  assert.equal(server.logins().length, 1);
+  await advance(30 * MINUTE, MINUTE);
+  assert.equal(server.logins().length, 1);
+  assert.match(message(gladys).en, /Not signed in to Hubspace/);
 });
 
 test('a bearer refused twice: a spaced retry (1 h), never a password sign-in loop', async (t) => {
@@ -680,4 +742,136 @@ test('a network failure retries after the backoff, never sooner than the interva
   server.down = false;
   await advance(2 * SECOND);
   assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('B1: a lock decides on the fresh read only, never on the previous cycle', async (t) => {
+  const { server, set, gladys } = await setup(t);
+  await gladys.fake.configUpdated({ ...CONFIG, allow_unlock: true });
+  // The read answers no states at all: the lock in memory says "locked", nothing is sent.
+  server.queue.push({
+    match: (r) => r.method === 'GET' && r.path.endsWith(`/${IDS.lock}/state`),
+    status: 200,
+    body: { metadeviceId: IDS.lock, values: [] },
+  });
+  let ack = await set(IDS.lock, 'unlock', 1);
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /offline|unknown/);
+  // Available but without lock-control: unknown, nothing sent.
+  server.queue.push({
+    match: (r) => r.method === 'GET' && r.path.endsWith(`/${IDS.lock}/state`),
+    status: 200,
+    body: {
+      metadeviceId: IDS.lock,
+      values: [{ functionClass: 'available', functionInstance: null, value: true }],
+    },
+  });
+  ack = await set(IDS.lock, 'unlock', 1);
+  assert.match(ack.error, /unknown/);
+  // The states of another device: refused.
+  server.queue.push({
+    match: (r) => r.method === 'GET' && r.path.endsWith(`/${IDS.lock}/state`),
+    status: 200,
+    body: { metadeviceId: IDS.light, values: server.device(IDS.lock).state.values },
+  });
+  ack = await set(IDS.lock, 'unlock', 1);
+  assert.equal(ack.success, false);
+  assert.equal(server.puts().length, 0);
+});
+
+test('I2: a command that must renew the bearer keeps to its budget', async (t) => {
+  const { server, set, advance } = await setup(t);
+  // The bearer is about to expire: the command renews it first.
+  await advance(100 * SECOND);
+  server.before = (r) => {
+    if (r.path.endsWith('/openid-connect/token')) {
+      t.mock.timers.tick(3 * SECOND);
+    }
+  };
+  const ack = await set(IDS.outlet, 'power', 1);
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /not sent/);
+  assert.equal(server.puts().length, 0);
+});
+
+test('I3: a write without an answer is reported as sent, then read again soon', async (t) => {
+  const { server, set } = await setup(t);
+  server.before = (r) => {
+    if (r.method === 'PUT') {
+      server.before = undefined;
+      throw new AferoError('timeout', 'no answer');
+    }
+  };
+  const reads = server.reads().length;
+  const ack = await set(IDS.outlet, 'power', 1);
+  assert.match(ack.error, /sent but Hubspace did not answer/);
+  t.mock.timers.tick(6 * SECOND);
+  await settle();
+  assert.equal(server.reads().length, reads + 1, 'read again within seconds');
+});
+
+test('I4: a lock shows its end state at the next read, not after the hold', async (t) => {
+  const { server, set, gladys } = await setup(t);
+  await gladys.fake.configUpdated({ ...CONFIG, allow_unlock: true });
+  await set(IDS.lock, 'unlock', 1);
+  assert.equal(last(gladys, IDS.lock, 'lock-state'), 2, 'unlocking');
+  server.setState(IDS.lock, 'lock-control', null, 'unlocked');
+  t.mock.timers.tick(6 * SECOND);
+  await settle();
+  t.mock.timers.tick(SECOND);
+  await settle();
+  assert.equal(last(gladys, IDS.lock, 'lock-state'), 0, 'unlocked, read 5 s later');
+});
+
+test('I5: a 403 of the sign-in host pauses one hour, kept across a restart', async (t) => {
+  const store = memoryStore();
+  const server = fakeAfero();
+  server.queue.push({
+    match: (r) => r.path.endsWith('/openid-connect/auth'),
+    status: 403,
+    body: '<html>blocked</html>',
+  });
+  const first = await setup(t, { store, server, create: false });
+  assert.match(message(first.gladys).en, /HTTP 403\): pausing for 60 min/);
+  assert.equal(store.data.forbiddenUntil, NOW + HOUR);
+  first.app.stop();
+  t.mock.timers.reset();
+  const second = await setup(t, { store, server, create: false, now: NOW + 10 * MINUTE });
+  const ack = await second.gladys.fake.action(ACTIONS.TEST_CONNECTION);
+  assert.match(ack.data.message.en, /pausing for 50 min/);
+  assert.equal(server.logins().length, 0);
+});
+
+test('M2: a 403 that is not an API answer (a CDN) pauses, the session untouched', async (t) => {
+  const { server, gladys, advance } = await setup(t);
+  server.queue.push({
+    match: (r) => r.path.endsWith('/metadevices'),
+    status: 403,
+    body: '<html>Request blocked</html>',
+  });
+  const tokens = server.tokenCalls().length;
+  await advance(60 * SECOND);
+  assert.match(message(gladys).en, /HTTP 403/);
+  assert.equal(server.tokenCalls().length, tokens, 'no renewal for a CDN block');
+});
+
+test('M4: /data keeps the refresh token only, written when it changes', async (t) => {
+  const { store, advance } = await setup(t);
+  assert.equal(store.data.session.bearer, undefined);
+  assert.equal(store.data.session.tokens, undefined);
+  assert.ok(store.data.session.refresh);
+  const saves = store.saves;
+  await advance(50 * SECOND);
+  assert.equal(store.saves, saves, 'a cycle without a renewal writes nothing');
+});
+
+test('M6: a light created with zones keeps them when only one is listed', async (t) => {
+  const { server, advance, gladys, set } = await setup(t);
+  // The trim disappears from the states: the main zone keeps its `-main` keys.
+  const trim = server.device(IDS.trim);
+  trim.state.values = trim.state.values.filter((v) => v.functionInstance !== 'trim');
+  await advance(60 * SECOND);
+  const ack = await set(IDS.trim, 'power-main', 0);
+  assert.equal(ack.success, true);
+  assert.deepEqual(putValues(server), [[['power', 'main', 'off']]]);
+  assert.equal(last(gladys, IDS.trim, 'power-main'), 0);
 });

@@ -3,7 +3,7 @@
   "type": "device",
   "name": "Hubspace",
   "description": {
-    "en": "Hubspace (Home Depot) lights, plugs, switches and fans; locks and water timers read only.",
+    "en": "Hubspace (Home Depot) lights, plugs, switches and fans; lock and valve commands off by default.",
     "fr": "Hubspace (Home Depot) : lumières, prises, interrupteurs, ventilateurs ; serrures, arrosage."
   },
   "version": "0.1.0",

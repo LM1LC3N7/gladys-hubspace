@@ -142,10 +142,14 @@ export function kelvinOf(value) {
     : undefined;
 }
 
+export const nearest = (list, value) =>
+  list.reduce((best, item) => (Math.abs(item - value) < Math.abs(best - value) ? item : best));
+
 /**
  * The colour temperatures a light supports (aioafero process_color_temps /
- * process_range) and whether the value is sent with a "K" (a category
- * function) or as a number.
+ * process_range): `{ min, max, snap(kelvin), suffix }`, the value sent with a
+ * "K" for a category function, as a number otherwise. A numeric range snaps
+ * to `min + n * step` (no list built).
  */
 export function temperaturesOf(fn) {
   if (!fn) {
@@ -153,15 +157,17 @@ export function temperaturesOf(fn) {
   }
   if (fn.type === 'numeric') {
     const range = rangeOf(fn);
-    if (!range) {
+    if (!range || range.min < 1000 || range.max > 10000) {
       return undefined;
     }
-    const supported = [];
-    for (let k = range.min; k < range.max && supported.length < 200; k += range.step) {
-      supported.push(Math.round(k));
-    }
-    supported.push(Math.round(range.max));
-    return { supported, suffix: '' };
+    const { min, max, step } = range;
+    return {
+      min,
+      max,
+      snap: (k) =>
+        Math.round(Math.min(max, Math.max(min, min + Math.round((k - min) / step) * step))),
+      suffix: '',
+    };
   }
   const supported = [
     ...new Set(
@@ -170,11 +176,15 @@ export function temperaturesOf(fn) {
         .filter((k) => k !== undefined),
     ),
   ].sort((a, b) => a - b);
-  return supported.length > 0 ? { supported, suffix: 'K' } : undefined;
+  return supported.length > 0
+    ? {
+        min: supported[0],
+        max: supported[supported.length - 1],
+        snap: (k) => nearest(supported, k),
+        suffix: 'K',
+      }
+    : undefined;
 }
-
-export const nearest = (list, value) =>
-  list.reduce((best, item) => (Math.abs(item - value) < Math.abs(best - value) ? item : best));
 
 /** The colour of a `color-rgb` state -> 0xRRGGBB. */
 export function rgbOf(value) {

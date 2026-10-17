@@ -39,7 +39,7 @@ test('the persisted state is repaired, its pause and retry ends capped', () => {
       salt: 'f'.repeat(32),
       session: {
         account: 'abc',
-        tokens: { refresh: 'r', bearer: 'b', expiresAt: 5 },
+        refresh: 'r',
         accountId: 'x',
       },
       pending: {
@@ -50,6 +50,7 @@ test('the persisted state is repaired, its pause and retry ends capped', () => {
         params: { session_code: 's', execution: 'e', tab_id: 't' },
       },
       rateLimitedUntil: now + 100 * HOUR,
+      forbiddenUntil: now + 100 * HOUR,
       block: {
         kind: 'session_refused',
         fingerprint: '0123456789abcdef',
@@ -62,11 +63,12 @@ test('the persisted state is repaired, its pause and retry ends capped', () => {
   assert.equal(memory.rateLimitedUntil, now + TIMINGS.rateLimitMax);
   assert.equal(memory.block.retryAt, now + 24 * HOUR);
   assert.deepEqual(memory.pending.cookies, { AUTH_SESSION_ID: 'a' });
-  assert.deepEqual(memory.session.tokens, { refresh: 'r', bearer: 'b', expiresAt: 5 });
+  assert.equal(memory.forbiddenUntil, now + TIMINGS.forbiddenPause);
+  assert.deepEqual(memory.session, { account: 'abc', refresh: 'r', accountId: 'x' });
 
   const broken = normalizeMemory({
     salt: 'nope',
-    session: { tokens: {} },
+    session: { refresh: '' },
     block: { kind: 'other' },
   });
   assert.deepEqual(broken, {
@@ -75,6 +77,7 @@ test('the persisted state is repaired, its pause and retry ends capped', () => {
     pending: null,
     codeAt: undefined,
     rateLimitedUntil: undefined,
+    forbiddenUntil: undefined,
     block: null,
   });
   assert.equal(normalizeMemory(null).session, null);

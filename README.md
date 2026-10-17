@@ -29,8 +29,12 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (HubspaceApp)
   e-mail and password; the redirect to `hubspace-app://loginredirect` carries
   the code exchanged for the tokens. The `id_token` is the bearer of the API
   calls; the refresh token renews it (30 s before it ends). Tokens and the
-  account id are kept in `/data`: no password sign-in per cycle nor per
-  restart. A dead refresh token signs in again with the password, once.
+  account id are kept in `/data` (the refresh token only, written when it
+  changes). The password is posted only on an action of the user (new
+  credentials saved, _Test the connection_, _Send the verification code_),
+  never from a start, a reconnection, a cycle or a retry: no code e-mailed
+  without a click. A dead refresh token is the persisted "session expired"
+  stop.
 - **Verification code**: when the login answers the `kc-otp-login-form`,
   Hubspace has e-mailed a code; the integration keeps the form (cookies,
   parameters, PKCE verifier) in `/data` and stops. _Verify the code_ posts

@@ -29,8 +29,9 @@ echoed by a write (only those sent are kept). The test fixtures are shaped
 like aioafero's device dumps. Changed: no BeautifulSoup (a bounded scan of
 the form tags), no Conclave push socket (REST polling only), one device list
 read per cycle instead of one state read per device, a light keeps one
-Gladys device for all its zones, locks and water timers are read only by
-default with push buttons.
+Gladys device for all its zones, locks and water timers show a read-only
+state and push buttons (unlocking and the valves off by default), the
+password is posted only on an action of the user.
 
 ```
 The MIT License (MIT)

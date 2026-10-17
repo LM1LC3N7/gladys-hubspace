@@ -2,20 +2,23 @@
 // What must survive a restart, in /data (the only writable place of the
 // container), never the e-mail nor the password:
 //   - a random salt made once (for the fingerprint below);
-//   - the tokens (refresh token, bearer, expiry) and the Afero account id,
-//     with the account they belong to (a hash of the e-mail), so a restart
-//     never signs in again with the password (which may e-mail a code);
+//   - the refresh token (not the short-lived bearer) and the Afero account
+//     id, with the account they belong to (a hash of the e-mail), so a
+//     restart never signs in again with the password (which may e-mail a
+//     code); written only when one of them changes;
 //   - a sign-in waiting for its e-mailed code (its cookies, form parameters
 //     and PKCE verifier), and when the button last started a sign-in;
-//   - the end of a 429 pause (kept across restarts and account changes);
-//   - a stop on refused credentials and the spaced retries of a refused
-//     session, tied to a salted fingerprint of the e-mail and password, so a
-//     restart does not retry what Hubspace refused, and a new password does.
+//   - the end of a 429 pause (kept across restarts and account changes) and
+//     of a 403 pause of the sign-in host;
+//   - a stop (refused credentials, unknown sign-in page, expired session,
+//     code awaited) and the spaced retries of a refused session, tied to a
+//     salted fingerprint of the e-mail and password, so a restart does not
+//     retry what Hubspace refused, and a new password does.
 // The file is readable by the container user only (0600).
 // -----------------------------------------------------------------------------
 
 import { createHash, randomBytes } from 'node:crypto';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { open, readFile, rename } from 'node:fs/promises';
 import { TIMINGS } from './constants.js';
 
 export const STATE_FILE = '/data/hubspace-state.json';
@@ -35,7 +38,14 @@ export function fileStore(path = STATE_FILE) {
       const text = JSON.stringify(data);
       const write = chain.then(async () => {
         const temporary = `${path}.tmp`;
-        await writeFile(temporary, text, { mode: 0o600 });
+        const file = await open(temporary, 'w', 0o600);
+        try {
+          await file.writeFile(text);
+          // On disk before it replaces the previous state (a power cut keeps one of the two).
+          await file.sync();
+        } finally {
+          await file.close();
+        }
         await rename(temporary, path);
       });
       chain = write.catch(() => {});
@@ -57,14 +67,7 @@ const time = (value) => (Number.isFinite(value) ? value : undefined);
 const str = (value, max = 16384) =>
   typeof value === 'string' && value !== '' && value.length <= max ? value : undefined;
 
-const BLOCKS = new Set(['refused', 'login_rejected', 'session_refused']);
-
-function tokens(raw) {
-  const refresh = str(raw?.refresh);
-  return refresh
-    ? { refresh, bearer: str(raw.bearer) ?? null, expiresAt: time(raw.expiresAt) ?? 0 }
-    : null;
-}
+const BLOCKS = new Set(['refused', 'login_rejected', 'session_refused', 'expired', 'two_factor']);
 
 function pending(raw) {
   const p = raw?.pending;
@@ -100,23 +103,24 @@ function pending(raw) {
 /** The persisted state, repaired; the pause and retry ends are capped from `now`. */
 export function normalizeMemory(raw, now = Date.now()) {
   const session = raw?.session;
-  const t = tokens(session?.tokens);
+  const refresh = str(session?.refresh);
   const block = raw?.block;
   const capped = (value, max) =>
     time(value) === undefined ? undefined : Math.min(value, now + max);
   return {
     salt: typeof raw?.salt === 'string' && /^[0-9a-f]{32}$/.test(raw.salt) ? raw.salt : null,
     session:
-      t && str(session?.account, 64)
+      refresh && str(session?.account, 64)
         ? {
             account: session.account,
-            tokens: t,
+            refresh,
             accountId: str(session.accountId, 64),
           }
         : null,
     pending: pending(raw),
     codeAt: time(raw?.codeAt),
     rateLimitedUntil: capped(raw?.rateLimitedUntil, TIMINGS.rateLimitMax),
+    forbiddenUntil: capped(raw?.forbiddenUntil, TIMINGS.forbiddenPause),
     block:
       BLOCKS.has(block?.kind) && /^[0-9a-f]{16}$/.test(block?.fingerprint ?? '')
         ? {

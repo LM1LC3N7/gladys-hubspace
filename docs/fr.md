@@ -43,23 +43,39 @@ garage ne sont pas gérées par aioafero : elles ne le sont pas non plus ici.
 - Avant chaque commande de serrure ou de vanne, l'intégration relit l'état
   auprès de Hubspace : rien n'est envoyé si l'appareil est hors ligne, si
   l'état est inconnu ou si la serrure est en mouvement, et rien n'est
-  renvoyé si l'appareil est déjà dans l'état voulu.
+  renvoyé si l'appareil est déjà dans l'état voulu. La décision se fait sur
+  cette seule relecture : un état qu'elle ne contient pas est inconnu.
+
+> **Prises et interrupteurs** : ils sont des interrupteurs pour Gladys, donc
+> pour un « tout éteindre » d'une scène ou d'un assistant vocal (Google Home,
+> Alexa, HomeKit). N'exposez pas à un assistant vocal, et ne mettez pas dans
+> une scène « tout éteindre », une prise qui alimente une pompe, un
+> congélateur, un aquarium ou un appareil médical.
 
 ## Mise en place
 
 1. Dans Gladys, installez l'intégration **Hubspace** depuis le store.
 2. Saisissez l'**e-mail** et le **mot de passe** de votre compte Hubspace
-   (ceux de l'application), puis enregistrez.
+   (ceux de l'application), puis enregistrez : l'intégration se connecte une
+   fois. Si l'état indique « Non connecté », cliquez sur **Tester la
+   connexion**.
 3. Si l'état indique qu'un code a été envoyé par e-mail, voir ci-dessous.
 4. Ouvrez l'onglet **Découverte** et ajoutez les appareils.
 
 Le champ du mot de passe est un champ `secret` : Gladys le garde dans sa
 base (en clair, comme toute valeur de configuration, et dans ses
 sauvegardes), ne le réaffiche jamais, et l'intégration ne l'envoie qu'à la
-page de connexion Hubspace (`accounts.hubspaceconnect.com`). Il ne sert
-qu'à la première connexion et quand Hubspace refuse le jeton de
-renouvellement : le reste du temps, l'intégration renouvelle sa session
-avec ce jeton.
+page de connexion Hubspace (`accounts.hubspaceconnect.com`).
+
+**Le mot de passe n'est envoyé que sur une action de votre part** : un
+e-mail ou un mot de passe nouvellement enregistré, un clic sur _Tester la
+connexion_ ou sur _Envoyer le code de vérification_. Jamais au démarrage,
+à une reconnexion à Gladys, ni pendant les lectures : Hubspace pouvant
+envoyer un code par e-mail à chaque connexion, vous ne recevez jamais de
+code sans l'avoir demandé. Le reste du temps, l'intégration renouvelle sa
+session avec son jeton de renouvellement ; si Hubspace le refuse, elle
+s'arrête (« session expirée », même après un redémarrage) et attend votre
+clic sur _Tester la connexion_.
 
 ### Code de vérification (par e-mail)
 
@@ -74,8 +90,9 @@ s'arrête et l'état l'indique :
    Hubspace envoie un nouveau code (au plus une fois par minute).
 
 La session est ensuite gardée (dans le `/data` de l'intégration) : pas de
-code aux redémarrages. L'intégration ne se reconnecte jamais d'elle-même en
-boucle : au plus un e-mail automatique par incident.
+code aux redémarrages. L'intégration ne se connecte jamais d'elle-même : un
+code n'est envoyé qu'après votre enregistrement ou votre clic, et l'attente
+du code est gardée après un redémarrage.
 
 ## Rafraîchissement
 
@@ -87,7 +104,9 @@ n'est pas défaite par une lecture un peu en retard (15 secondes).
 Les commandes d'un même appareil passent l'une après l'autre. Gladys attend
 5 secondes la réponse d'une commande : si Hubspace est trop lent,
 l'intégration refuse la commande **avant de l'envoyer** plutôt que de
-l'envoyer après l'échec affiché.
+l'envoyer après l'échec affiché. Une commande envoyée restée sans réponse est
+signalée « envoyée sans confirmation : vérifiez l'état », et l'état est relu
+quelques secondes après (de même après une commande de serrure ou de vanne).
 
 ## En cas de problème
 
@@ -97,8 +116,12 @@ l'envoyer après l'échec affiché.
   refus.
 - **Session refusée** : la session est renouvelée une fois ; refusée à
   nouveau, l'intégration se met en pause et réessaie après 1 heure,
-  6 heures, puis toutes les 24 heures (gardé après un redémarrage).
-  _Tester la connexion_ réessaie tout de suite.
+  6 heures, puis toutes les 24 heures (gardé après un redémarrage), sans
+  jamais renvoyer le mot de passe. _Tester la connexion_ réessaie tout de
+  suite.
+- **Session expirée** (jeton de renouvellement refusé) ou **non connecté** :
+  arrêt jusqu'à un clic sur _Tester la connexion_. Une connexion restée sans
+  réponse n'est jamais relancée d'elle-même.
 - **Page de connexion inconnue** : Hubspace demande une étape que
   l'intégration ne connaît pas (accepter des conditions, changer le mot de
   passe…) : connectez-vous une fois dans l'application, puis cliquez sur

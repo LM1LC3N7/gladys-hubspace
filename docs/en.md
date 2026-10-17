@@ -40,22 +40,35 @@ here either.
 - Before every lock or valve command, the integration reads the state again
   from Hubspace: nothing is sent when the device is offline, the state is
   unknown or the lock is moving, and nothing is sent again when the device
-  already is in the wanted state.
+  already is in the wanted state. The decision is made on that read alone: a
+  state it does not carry is unknown.
+
+> **Plugs and switches** are switches for Gladys, so for an "everything off"
+> of a scene or a voice assistant (Google Home, Alexa, HomeKit). Do not expose
+> to a voice assistant, nor put in an "everything off" scene, a plug that
+> powers a pump, a freezer, an aquarium or a medical device.
 
 ## Setup
 
 1. In Gladys, install the **Hubspace** integration from the store.
 2. Enter the **e-mail** and **password** of your Hubspace account (the ones
-   of the app), then save.
+   of the app), then save: the integration signs in once. If the status says
+   "Not signed in", click **Test the connection**.
 3. If the status says a code was e-mailed, see below.
 4. Open the **Discovery** tab and add the devices.
 
 The password field is a `secret` field: Gladys keeps it in its database (in
 plain text, like every configuration value, and in its backups), never shows
 it again, and the integration sends it only to the Hubspace sign-in page
-(`accounts.hubspaceconnect.com`). It is used only for the first sign-in and
-when Hubspace refuses the refresh token: the rest of the time, the
-integration renews its session with that token.
+(`accounts.hubspaceconnect.com`).
+
+**The password is sent only on an action of yours**: a newly saved e-mail or
+password, a click on _Test the connection_ or on _Send the verification
+code_. Never at a start, a reconnection to Gladys nor during the reads: as
+Hubspace may e-mail a code at every sign-in, you never get a code you did not
+ask for. The rest of the time, the integration renews its session with its
+refresh token; when Hubspace refuses it, it stops ("session expired", even
+after a restart) and waits for your click on _Test the connection_.
 
 ### Verification code (by e-mail)
 
@@ -69,8 +82,9 @@ sends the code at the sign-in, the integration stops and the status says so:
    new code (at most once a minute).
 
 The session is then kept (in the integration's `/data`): no code at the next
-restarts. The integration never signs in again in a loop by itself: at most
-one automatic e-mail per incident.
+restarts. The integration never signs in by itself: a code is sent only
+after you saved or clicked, and the wait for the code is kept across a
+restart.
 
 ## Refresh
 
@@ -82,7 +96,9 @@ Hubspace confirms shows at once and is not undone by a read slightly behind
 The commands of one device run one after the other. Gladys waits 5 seconds
 for the answer to a command: when Hubspace is too slow, the integration
 refuses the command **before sending it** rather than sending it after the
-failure is shown.
+failure is shown. A command sent without an answer is reported "sent, without
+confirmation: check the state", and the state is read again a few seconds
+later (likewise after a lock or valve command).
 
 ## Troubleshooting
 
@@ -91,7 +107,11 @@ failure is shown.
   never signs in again by itself after a refusal.
 - **Session refused**: the session is renewed once; refused again, the
   integration pauses and tries again after 1 hour, 6 hours, then every
-  24 hours (kept across a restart). _Test the connection_ tries at once.
+  24 hours (kept across a restart), never sending the password again.
+  _Test the connection_ tries at once.
+- **Session expired** (refresh token refused) or **not signed in**: a stop
+  until a click on _Test the connection_. A sign-in left without an answer
+  is never sent again by itself.
 - **Unknown sign-in page**: Hubspace asks for a step the integration does
   not know (accept terms, change the password…): sign in once in the app,
   then click _Test the connection_.

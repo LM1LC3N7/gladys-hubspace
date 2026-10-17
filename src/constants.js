@@ -81,6 +81,8 @@ export const TIMINGS = {
   commandMinimum: 1500,
   /** A commanded value wins over the polled one this long, unless the poll confirms it. */
   commandHold: 15 * SECOND,
+  /** A lock or valve command, or a write without an answer: read again this soon. */
+  confirmRead: 5 * SECOND,
   /** The bearer is renewed this long before it expires. */
   tokenMargin: 30 * SECOND,
   /** aioafero DEFAULT_TOKEN_TIMEOUT, when the token answer has no expires_in. */

@@ -125,12 +125,24 @@ test('colour temperatures: numeric ranges and category lists', () => {
     type: 'numeric',
     values: [{ range: { min: 2700, max: 3000, step: 100 } }],
   });
-  assert.deepEqual(numeric, { supported: [2700, 2800, 2900, 3000], suffix: '' });
+  assert.deepEqual([numeric.min, numeric.max, numeric.suffix], [2700, 3000, '']);
+  assert.equal(numeric.snap(2749), 2700);
+  assert.equal(numeric.snap(2751), 2800);
+  assert.equal(numeric.snap(9000), 3000);
+  assert.equal(numeric.snap(100), 2700);
+  // A huge range builds no list: snapping is arithmetic.
+  const fine = temperaturesOf({
+    type: 'numeric',
+    values: [{ range: { min: 2200, max: 6500, step: 0.001 } }],
+  });
+  assert.equal(fine.snap(4000.0004), 4000);
   const listed = temperaturesOf({
     type: 'category',
     values: [{ name: '6500K' }, { name: '2700K' }, { name: '3000K' }],
   });
-  assert.deepEqual(listed, { supported: [2700, 3000, 6500], suffix: 'K' });
+  assert.deepEqual([listed.min, listed.max, listed.suffix], [2700, 6500, 'K']);
+  assert.equal(listed.snap(4000), 3000);
+  assert.equal(listed.snap(5000), 6500);
 });
 
 test('fan speeds as aioafero orders them, and its percentages', () => {

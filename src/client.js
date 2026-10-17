@@ -162,13 +162,32 @@ export class HubspaceClient {
     return this.single(() => this.doLogin(timeout));
   }
 
+  /** One sign-in step at a time: a job waits for the one in progress, then runs its own. */
   single(job) {
-    if (!this.authenticating) {
-      this.authenticating = job().finally(() => {
+    const run = (this.authenticating ?? Promise.resolve()).catch(() => {}).then(job);
+    const tail = run.finally(() => {
+      if (this.authenticating === tail) {
         this.authenticating = undefined;
-      });
+      }
+    });
+    tail.catch(() => {});
+    this.authenticating = tail;
+    return run;
+  }
+
+  /**
+   * The timeout of a request made before `deadline` (a command): what is
+   * left, or `late` when less than the minimum is (never sent then).
+   */
+  timeLeft(deadline, timeout) {
+    if (deadline === undefined) {
+      return timeout;
     }
-    return this.authenticating;
+    const left = deadline - this.now();
+    if (left < TIMINGS.commandMinimum) {
+      throw new AferoError('late', 'not enough time left to send the request');
+    }
+    return left;
   }
 
   /**
@@ -324,9 +343,20 @@ export class HubspaceClient {
   }
 
   /** Renews the bearer with the refresh token. */
-  refresh({ timeout } = {}) {
+  refresh({ timeout, deadline } = {}) {
+    const before = this.tokens;
     return this.single(async () => {
       const current = this.tokens;
+      if (current !== before) {
+        // Renewed (or refused) while this one waited.
+        if (current?.bearer && this.now() < current.expiresAt - TIMINGS.tokenMargin) {
+          return current;
+        }
+        if (!current?.refresh) {
+          throw new AferoError('token_refused', 'the refresh token was refused');
+        }
+      }
+      timeout = this.timeLeft(deadline, timeout);
       try {
         this.tokens = await this.token(
           {
@@ -350,10 +380,11 @@ export class HubspaceClient {
 
   /**
    * A bearer that is not about to expire. Resolves true when it was obtained
-   * now. A dead refresh token signs in again with the password, once per
-   * cycle, and only when `allowLogin` (never from a command).
+   * now. The password is posted only when `allowLogin` (a click or new
+   * credentials of the user), once per cycle: otherwise no tokens is
+   * `signed_out`, and a dead refresh token is `expired`.
    */
-  async ensureBearer({ allowLogin = true, timeout, force = false } = {}) {
+  async ensureBearer({ allowLogin = false, timeout, deadline, force = false } = {}) {
     if (this.authenticating) {
       await this.authenticating.catch(() => {});
     }
@@ -363,16 +394,19 @@ export class HubspaceClient {
     }
     if (tokens?.refresh) {
       try {
-        await this.refresh({ timeout });
+        await this.refresh({ timeout, deadline });
         return true;
       } catch (err) {
         if (err.kind !== 'token_refused') {
           throw err;
         }
+        if (!allowLogin) {
+          throw new AferoError('expired', 'the Hubspace session expired');
+        }
       }
     }
     if (!allowLogin) {
-      throw new AferoError('unauthorized', 'signed out of Hubspace');
+      throw new AferoError(this.tokens ? 'expired' : 'signed_out', 'signed out of Hubspace');
     }
     if (this.relogged) {
       throw new AferoError('session_refused', 'the session was refused after a new sign-in');
@@ -384,28 +418,50 @@ export class HubspaceClient {
 
   // --- Afero API ---------------------------------------------------------------
 
-  async apiSend(method, path, { query, payload, data = true, timeout } = {}) {
+  async apiSend(method, path, { query, payload, data = true, timeout, deadline } = {}) {
     const body = payload === undefined ? undefined : JSON.stringify(payload);
-    const answer = await this.transport(`${apiUrl(path)}${query ? `?${query}` : ''}`, {
-      method,
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'application/json',
-        Authorization: `Bearer ${this.tokens?.bearer ?? ''}`,
-        ...(data ? { Host: AFERO.dataHost } : {}),
-        ...(body === undefined
-          ? {}
-          : {
-              'Content-Type': 'application/json; charset=utf-8',
-              'Content-Length': Buffer.byteLength(body),
-            }),
-      },
-      body,
-      ...this.options(timeout, LIMITS.responseBytes),
-    });
+    const wait = this.timeLeft(deadline, timeout);
+    let answer;
+    try {
+      answer = await this.transport(`${apiUrl(path)}${query ? `?${query}` : ''}`, {
+        method,
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'application/json',
+          Authorization: `Bearer ${this.tokens?.bearer ?? ''}`,
+          ...(data ? { Host: AFERO.dataHost } : {}),
+          ...(body === undefined
+            ? {}
+            : {
+                'Content-Type': 'application/json; charset=utf-8',
+                'Content-Length': Buffer.byteLength(body),
+              }),
+        },
+        body,
+        ...this.options(wait, LIMITS.responseBytes),
+      });
+    } catch (err) {
+      // A write without an answer may have reached the device.
+      if (method === 'PUT' && err instanceof AferoError) {
+        err.sent = true;
+      }
+      throw err;
+    }
     const error = transientError(answer, this.now());
     if (error) {
       throw error;
+    }
+    if (answer.status === 403) {
+      let json;
+      try {
+        json = JSON.parse(answer.body);
+      } catch {
+        json = undefined;
+      }
+      if (!json || typeof json !== 'object') {
+        // Not an answer of the API (a CDN block): transient, not the session.
+        throw new AferoError('forbidden', 'Hubspace refused the request', { status: 403 });
+      }
     }
     if (answer.status === 401 || answer.status === 403) {
       // aioafero: a 403 is a credential failure on the account endpoints.
@@ -427,10 +483,10 @@ export class HubspaceClient {
    * and the call retried once; refused again, or refused right after a
    * renewal, it is `session_refused`.
    */
-  async call(method, path, { allowLogin = true, timeout, ...options } = {}) {
-    const fresh = await this.ensureBearer({ allowLogin, timeout });
+  async call(method, path, { allowLogin = false, timeout, deadline, ...options } = {}) {
+    const fresh = await this.ensureBearer({ allowLogin, timeout, deadline });
     try {
-      return await this.apiSend(method, path, { ...options, timeout });
+      return await this.apiSend(method, path, { ...options, timeout, deadline });
     } catch (err) {
       if (err.kind !== 'unauthorized') {
         throw err;
@@ -441,9 +497,9 @@ export class HubspaceClient {
         });
       }
     }
-    await this.ensureBearer({ allowLogin, timeout, force: true });
+    await this.ensureBearer({ allowLogin: false, timeout, deadline, force: true });
     try {
-      return await this.apiSend(method, path, { ...options, timeout });
+      return await this.apiSend(method, path, { ...options, timeout, deadline });
     } catch (err) {
       if (err.kind === 'unauthorized') {
         throw new AferoError('session_refused', 'the session was refused right after a renewal', {
@@ -486,8 +542,8 @@ export class HubspaceClient {
   async deviceState(id, options = {}) {
     const account = await this.account(options);
     const json = await this.call('GET', API_PATHS.state(account, id), options);
-    if (!Array.isArray(json?.values)) {
-      throw new AferoError('bad_response', 'Hubspace sent no states');
+    if (!Array.isArray(json?.values) || json.metadeviceId !== id) {
+      throw new AferoError('bad_response', 'Hubspace sent no states of this device');
     }
     return json.values;
   }

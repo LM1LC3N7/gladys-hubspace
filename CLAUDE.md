@@ -13,7 +13,8 @@ runtime dependency (HTTPS goes through `node:https`). It signs in to Hubspace
 (Home Depot, Afero cloud) with the e-mail and password of the app (plus the
 code Hubspace e-mails when it asks), reads every device once per cycle and
 shows and commands lights, plugs, switches and fans; locks and water timers
-are read only unless the user allows their push buttons. Ported from aioafero
+show a read-only state and push buttons (locking always allowed, unlocking
+and the valves off until the user allows them). Ported from aioafero
 (MIT). Unofficial API, never tested with a real account, not affiliated with
 Hubspace, Home Depot or Afero.
 
@@ -69,9 +70,12 @@ test/helpers/       a fake Hubspace behind the transport; Gladys is the SDK's fa
 - **Commands**: one at a time per device, refused before they are sent when
   they cannot finish within Gladys' 5 s; never a password sign-in from a
   command.
-- **Never sign in again by itself after a refusal**, at most one password
-  sign-in per cycle, never a loop of e-mailed codes. Never log or put in a
-  message the password, a token, a cookie, the account id or a code.
+- **The password is posted only on an action of the user** (new credentials
+  saved, "Test the connection", "Send the verification code"): never from a
+  start, a `connected`, a cycle or a retry, so Hubspace never e-mails a code
+  without a click. A refused refresh token is the `expired` stop, persisted;
+  a sign-in without an answer is never posted again by itself. Never log or
+  put in a message the password, a token, a cookie, the account id or a code.
 - Polling politely: one request per cycle, 30 to 60 s, never sooner than the
   interval after an error; 429 pauses every path. Never add a call outside
   `HubspaceClient`.

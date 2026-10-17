@@ -23,7 +23,7 @@ RUN npm ci --omit=dev || npm install --omit=dev
 COPY index.js ./
 COPY src ./src
 COPY gladys-assistant-integration.json ./
-# The licenses ship with the code they cover (Apache-2.0 notices of the ported logic).
+# The licenses ship with the code they cover (Apache-2.0 license, MIT notice of the logic ported from aioafero).
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 
 # The only writable location allowed at runtime. Docker creates a new volume

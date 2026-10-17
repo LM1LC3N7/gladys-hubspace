@@ -29,7 +29,6 @@ import {
   functionOf,
   instancesOf,
   kelvinOf,
-  nearest,
   rangeOf,
   rgbOf,
   rgbValue,
@@ -135,8 +134,8 @@ function lightZone(device, zone, suffix, label) {
       : temperaturesOf(functionOf(device, 'color-temperature', temperature));
   if (temps) {
     // Gladys: mireds. The warmest kelvin is the largest mired.
-    const minMired = Math.round(1_000_000 / temps.supported[temps.supported.length - 1]);
-    const maxMired = Math.round(1_000_000 / temps.supported[0]);
+    const minMired = Math.round(1_000_000 / temps.max);
+    const maxMired = Math.round(1_000_000 / temps.min);
     specs.push({
       key: `color-temperature${suffix}`,
       name: ['temperature', label],
@@ -149,7 +148,7 @@ function lightZone(device, zone, suffix, label) {
         return kelvin ? Math.round(1_000_000 / kelvin) : undefined;
       },
       write: (v, d) => {
-        const kelvin = nearest(temps.supported, 1_000_000 / clamp(v, minMired, maxMired));
+        const kelvin = temps.snap(1_000_000 / clamp(v, minMired, maxMired));
         return [
           ...powerOn(d, power),
           ...modeTo(d, mode, 'white'),
@@ -177,12 +176,17 @@ function lightZone(device, zone, suffix, label) {
   return specs;
 }
 
-function lightSpecs(device) {
+/**
+ * `layout`: 'zones' or 'single' when the device was created that way (its
+ * features stay those keys), undefined to choose from the states.
+ */
+function lightSpecs(device, layout) {
   const powers = instancesOf(device, 'power');
   const brightnesses = new Set(instancesOf(device, 'brightness'));
   // Several zones (a fixture with a main light and a trim): one set of features each.
   const zones = powers.filter((i) => !NOT_A_ZONE.has(i) && brightnesses.has(i)).sort();
-  if (zones.length >= 2) {
+  const multi = layout === 'zones' ? zones.length >= 1 : layout !== 'single' && zones.length >= 2;
+  if (multi) {
     const seen = new Set();
     return zones.flatMap((z) => {
       const part = slug(z);
@@ -423,6 +427,10 @@ function checked(fresh, read, target, values) {
     return { refuse: 'unavailable' };
   }
   const current = read(fresh);
+  if (current === undefined) {
+    // The read did not carry the function commanded: never guessed.
+    return { refuse: 'unknownState' };
+  }
   if (current === target.state) {
     return [];
   }
@@ -447,6 +455,8 @@ function lockSpecs(device) {
       min: LOCK_STATE.UNLOCKED,
       max: LOCK_STATE.ERROR,
       read: (d) => LOCK_STATES[read(d)],
+      // A moving lock is never held against the read showing its end.
+      transient: [LOCK_STATE.ACTIVITY],
     },
     button('lock', 'lock', {
       option: undefined,
@@ -536,13 +546,16 @@ export const KINDS = {
   'water-timer': 'valve',
 };
 
-/** The features of a device: `{ kind, specs }`, or undefined when unsupported. */
-export function planOf(device) {
+/**
+ * The features of a device: `{ kind, specs }`, or undefined when unsupported.
+ * `layout`: the zone layout of a light already created ('zones' or 'single').
+ */
+export function planOf(device, { layout } = {}) {
   const kind = KINDS[device.cls];
   let specs;
   switch (kind) {
     case 'light':
-      specs = [...lightSpecs(device), ...motionSpec(device)];
+      specs = [...lightSpecs(device, layout), ...motionSpec(device)];
       break;
     case 'switch':
       specs = switchSpecs(device);
@@ -567,6 +580,15 @@ export function planOf(device) {
 }
 
 export const deviceIds = (gladys, id) => gladys.externalIds('device', id);
+
+/** The zone layout of a created light, from its feature keys; undefined otherwise. */
+export function layoutOf(created) {
+  const keys = (created?.features ?? []).map((f) => String(f.external_id).split(':').pop());
+  if (keys.some((k) => /^power-/.test(k))) {
+    return 'zones';
+  }
+  return keys.includes('power') ? 'single' : undefined;
+}
 
 const featureName = ([role, label], language) => `${word(FEATURE_NAMES[role], language)}${label}`;
 
