@@ -151,10 +151,12 @@ quelques secondes après (de même après une commande de serrure ou de vanne).
 ## Vie privée
 
 L'intégration garde dans `/data/hubspace-state.json` (lisible par son seul
-conteneur) : les jetons de session (renouvellement et accès) et
-l'identifiant de compte Afero, le compte auquel ils appartiennent sous forme
-d'empreinte de l'e-mail, une connexion en attente de code (ses cookies et
-paramètres), l'heure de la dernière demande de code, la fin d'une pause 429,
-et un arrêt sur identifiants refusés lié à une empreinte salée de l'e-mail et
-du mot de passe. Ni l'e-mail ni le mot de passe. Rien n'est envoyé ailleurs
+conteneur) : le seul jeton de renouvellement (le jeton d'accès, de courte
+durée, reste en mémoire) et l'identifiant de compte Afero, le compte auquel
+ils appartiennent sous forme d'empreinte de l'e-mail, une connexion en
+attente de code (ses cookies et paramètres), l'heure de la dernière demande
+de code, la fin d'une pause 429 et d'une pause 403, et un arrêt
+(identifiants refusés, page de connexion inconnue, session expirée, code
+attendu, session refusée et son prochain essai) lié à une empreinte salée de
+l'e-mail et du mot de passe. Ni l'e-mail ni le mot de passe. Rien n'est envoyé ailleurs
 qu'à Hubspace et Afero.

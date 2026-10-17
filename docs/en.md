@@ -138,9 +138,11 @@ later (likewise after a lock or valve command).
 ## Privacy
 
 The integration keeps in `/data/hubspace-state.json` (readable by its own
-container only): the session tokens (refresh and access) and the Afero
-account id, the account they belong to as a hash of the e-mail, a sign-in
-waiting for its code (its cookies and parameters), when a code was last
-requested, the end of a 429 pause, and a stop on refused credentials tied to
-a salted fingerprint of the e-mail and password. Neither the e-mail nor the
+container only): the refresh token only (the short-lived access token stays
+in memory) and the Afero account id, the account they belong to as a hash of
+the e-mail, a sign-in waiting for its code (its cookies and parameters), when
+a code was last requested, the end of a 429 pause and of a 403 pause, and a
+stop (refused credentials, unknown sign-in page, session expired, code
+awaited, session refused and its next try) tied to a salted fingerprint of
+the e-mail and password. Neither the e-mail nor the
 password. Nothing is sent anywhere but to Hubspace and Afero.

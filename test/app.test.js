@@ -875,3 +875,46 @@ test('M6: a light created with zones keeps them when only one is listed', async 
   assert.deepEqual(putValues(server), [[['power', 'main', 'off']]]);
   assert.equal(last(gladys, IDS.trim, 'power-main'), 0);
 });
+
+test('a cycle read sent before an unlock never shows the lock locked again', async (t) => {
+  const { server, set, gladys, advance } = await setup(t);
+  await gladys.fake.configUpdated({ ...CONFIG, allow_unlock: true });
+  await advance(55 * SECOND);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  server.before = async (r) => {
+    if (r.method === 'GET' && r.path.endsWith('/metadevices')) {
+      server.before = undefined;
+      // The answer reflects the states when the read was sent: still locked.
+      server.queue.push({
+        match: (x) => x === r,
+        status: 200,
+        body: structuredClone(server.devices),
+      });
+      await gate;
+    }
+  };
+  await advance(6 * SECOND);
+  const reads = server.reads().length;
+  const lockState = feature(IDS.lock, 'lock-state');
+  const from = gladys.fake.states.length;
+  const ack = await set(IDS.lock, 'unlock', 1);
+  assert.equal(ack.success, true);
+  server.setState(IDS.lock, 'lock-control', null, 'unlocked');
+  release();
+  await settle();
+  t.mock.timers.tick(SECOND);
+  await settle();
+  assert.equal(last(gladys, IDS.lock, 'lock-state'), 2, 'still unlocking, not locked');
+  // The confirmation read 5 s after the write, not pushed to 60 s by the cycle's end.
+  await advance(5 * SECOND, SECOND);
+  assert.equal(server.reads().length, reads + 1);
+  assert.equal(last(gladys, IDS.lock, 'lock-state'), 0);
+  const published = gladys.fake.states
+    .slice(from)
+    .filter((s) => s.device_feature_external_id === lockState)
+    .map((s) => s.state);
+  assert.ok(!published.includes(1), `never locked again: ${published}`);
+});

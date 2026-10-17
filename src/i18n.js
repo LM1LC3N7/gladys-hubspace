@@ -94,8 +94,8 @@ export const T = {
     ),
   forbidden: (wait) =>
     both(
-      `The Hubspace sign-in refuses the requests (HTTP 403): pausing for ${wait.en}.`,
-      `La connexion Hubspace refuse les requêtes (HTTP 403) : pause de ${wait.fr}.`,
+      `Hubspace refuses the requests (HTTP 403): pausing for ${wait.en}.`,
+      `Hubspace refuse les requêtes (HTTP 403) : pause de ${wait.fr}.`,
     ),
   code: {
     needsFields: both(

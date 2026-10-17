@@ -93,6 +93,10 @@ export class HubspaceApp {
     this.holds = new Map();
     /** metadevice id -> the tail of its command queue. */
     this.queues = new Map();
+    /** metadevice id -> when its last write was sent. */
+    this.putAt = new Map();
+    /** The earliest confirmation read asked (a command), undefined when none. */
+    this.soonAt = undefined;
     this.readCount = 0;
     this.published = undefined;
     this.badges = new Map();
@@ -205,6 +209,8 @@ export class HubspaceApp {
     this.plans = new Map();
     this.writers = new Map();
     this.holds = new Map();
+    this.putAt = new Map();
+    this.soonAt = undefined;
     this.readCount = 0;
     this.published = undefined;
     this.badges = new Map();
@@ -332,13 +338,23 @@ export class HubspaceApp {
 
   // --- Polling ---------------------------------------------------------------
 
-  /** `soon`: read again after this delay (a command to confirm), unless stopped or paused. */
+  /**
+   * `soon`: read again after this delay (a command to confirm), unless
+   * stopped or paused. The earliest such read asked is kept (`soonAt`) and
+   * honoured by every later scheduling, the end of a running cycle included.
+   */
   scheduleNext(soon) {
     this.clearTimer();
     if (!this.client.hasCredentials) {
       return;
     }
     const now = this.now();
+    if (soon !== undefined) {
+      this.soonAt = Math.min(this.soonAt ?? Infinity, now + soon);
+    }
+    if (this.soonAt !== undefined) {
+      soon = Math.max(0, this.soonAt - now);
+    }
     let delay;
     if (this.blocked === 'session_refused') {
       delay = Math.max(this.retryAt, this.pausedUntil) - now;
@@ -390,12 +406,16 @@ export class HubspaceApp {
     }
     this.client.beginCycle();
     this.client.timeout = quick ? TIMINGS.quickTimeout : undefined;
+    // This read answers the confirmation asked so far.
+    if (this.soonAt !== undefined && this.soonAt <= now) {
+      this.soonAt = undefined;
+    }
     try {
       const list = await this.client.devices({ allowLogin: login });
       if (generation !== this.generation) {
         return;
       }
-      await this.apply(list);
+      await this.apply(list, now);
       this.failures = 0;
       this.sessionRetries = 0;
       this.offline = false;
@@ -491,8 +511,18 @@ export class HubspaceApp {
     this.logger.warn(`Hubspace: ${reason}; next try in ${Math.round(wait / 1000)} s`);
   }
 
-  async apply(list) {
+  /**
+   * `startedAt`: when the read was sent. A device written to after that keeps
+   * its current states: the read may predate the write (never undo a command).
+   */
+  async apply(list, startedAt = -Infinity) {
     const devices = readDevices(list);
+    for (const [id, device] of devices) {
+      const current = this.devices.get(id);
+      if (current && (this.putAt.get(id) ?? -Infinity) >= startedAt) {
+        devices.set(id, { ...device, states: current.states });
+      }
+    }
     this.readCount = devices.size;
     this.devices = devices;
     this.rebuild();
@@ -748,6 +778,8 @@ export class HubspaceApp {
         throw commandError(COMMAND.late);
       }
       const stamp = this.now();
+      // A read sent before this moment never overwrites the states of this device.
+      this.putAt.set(deviceId, stamp);
       const values = result.map((v) => ({ ...v, lastUpdateTime: stamp }));
       const answer = await this.client.setState(deviceId, values, { deadline });
       this.confirm(deviceId, values, answer);
