@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
 ### Added
 
 - Sign-in to Hubspace (Home Depot, Afero cloud) with the e-mail and password
@@ -50,4 +52,5 @@ the notes of the version's GitHub Release.
 - "Test the connection" button; documentation in English and French;
   `LICENSE` and `THIRD_PARTY_NOTICES.md` shipped in the image.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-hubspace/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-hubspace/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-hubspace/releases/tag/v0.1.1
