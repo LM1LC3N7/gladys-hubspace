@@ -12,44 +12,36 @@ the notes of the version's GitHub Release.
 
 ### Added
 
-- A working example of scene triggers, scene actions and dashboard widgets
-  (Gladys 5.1.0 or later).
-- `CHANGELOG.md`, rolled by the Release workflow.
-- A GitHub Release for every version, with its changelog section as notes: the
-  Gladys Supervision page links each version to the repository's releases.
-- CI runs the tests on Node 22 and 24, and builds the Docker image.
-- Dependabot keeps the npm dependencies and the GitHub Actions up to date.
-- `SECURITY.md` (how to report a vulnerability) and `CLAUDE.md` (project rules
-  for contributors and coding assistants).
-- Manifest tests: `version` matches `package.json`, `docker_image` is tagged
-  with it, descriptions hold 10 to 100 characters, placeholders are
-  multi-language objects.
-- The latitude and longitude fields show an example value as placeholder.
+- Sign-in to Hubspace (Home Depot, Afero cloud) with the e-mail and password
+  of the app, as aioafero does it (Keycloak realm `thd`, PKCE); the tokens
+  and the account id kept in `/data` and renewed with the refresh token: no
+  password sign-in per cycle nor per restart.
+- The verification code Hubspace e-mails: the integration stops and says so;
+  "Verify the code" finishes the sign-in, "Send the verification code" asks
+  for a new one (at most once a minute). A restart between the two loses
+  nothing.
+- Lights (on/off, brightness, colour temperature, colour; one set per zone),
+  dimmers, plugs, switches and landscape transformers (one on/off per zone,
+  power), ceiling fans (on/off, speed, direction), exhaust-fan sensors
+  (motion, humidity above the threshold), batteries.
+- Locks: read-only state, "Lock" and "Unlock" push buttons, unlocking behind
+  "Allow unlocking" (off by default). Water timers: read-only state per
+  spigot, "Open the valve" and "Close the valve" push buttons behind "Allow
+  the water valves" (off by default). A fresh read of the state before each
+  of these commands. Never a `switch/binary`.
+- Commands one at a time per device, refused before they are sent when they
+  cannot finish within Gladys' 5 s; the confirmed values shown at once and
+  held 15 s against a stale read.
+- One read of every device every 60 s (30 to 60). Resilience: a refused
+  bearer renewed once, then a pause and one new try after 1 h, 6 h, then
+  every 24 h; refused credentials or an unknown sign-in page stop until the
+  configuration changes or a button is clicked; 429 pauses every path
+  (1 minute to 6 hours); these stops and pauses kept in `/data`; 5xx and
+  network errors retried after 1 to 15 minutes.
+- Status and Discovery sent again at every reconnection to Gladys; the
+  Discovery list never shrinks. Transport badge per device (unreachable when
+  Hubspace says it is offline).
+- "Test the connection" button; documentation in English and French;
+  `LICENSE` and `THIRD_PARTY_NOTICES.md` shipped in the image.
 
-### Changed
-
-- Node.js 22 or later is required (Node 20 is end-of-life).
-- Integration SDK 0.15.0. The tests now run against the fake Gladys of the
-  SDK, which refuses the payloads Gladys refuses.
-- The refresh interval is one minute minimum, the fastest Gladys polls a
-  device. The plug's power is only sent when it changes, and every 30
-  minutes otherwise.
-
-### Fixed
-
-- Gladys refused the devices of the Discovery tab: the weather station and
-  the plug declared their poll frequency in seconds instead of one of the
-  values Gladys accepts, and were never polled. They now poll every minute,
-  and the readings follow the refresh interval of the configuration.
-
-- The release commit no longer fails `npm run format:check`: the Release
-  workflow updates the manifest `version` and `docker_image` in place instead
-  of re-printing the whole file with `jq`.
-- The integration can write to `/data`: the image creates the directory owned
-  by the `node` user, a new Docker volume was owned by root.
-- A sub-container running the integration's own image follows it to the new
-  tag at each release, as well as in the manifest of the build summary: it kept
-  the previous tag, which may not exist on the registry. Sub-containers on a
-  third-party image (a broker, a database...) keep theirs.
-
-[Unreleased]: https://github.com/GladysAssistant/integration-template-js/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-hubspace/commits/main

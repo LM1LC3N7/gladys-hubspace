@@ -1,177 +1,198 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Hubspace",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Hubspace (Home Depot) lights, plugs, switches and fans; locks and water timers read only.",
+    "fr": "Hubspace (Home Depot) : lumières, prises, interrupteurs, ventilateurs ; serrures, arrosage."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-hubspace:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-hubspace/main/cover.png",
+  "categories": ["lighting"],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Hubspace account",
+        "fr": "Votre compte Hubspace"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Shows the devices of your Hubspace account (Home Depot, Afero cloud) in Gladys: lights (on/off, brightness, colour temperature, colour), plugs and switches, ceiling fans (on/off, speed, direction), exhaust-fan sensors, and the state of locks and water timers (commands off by default). Enter the e-mail and password of the Hubspace app, save, then add the devices from the Discovery tab. If Hubspace e-mails you a code, type it with the buttons below. Read every 60 seconds. Unofficial API, never tested with a real account. Not affiliated with Hubspace, Home Depot or Afero.",
+        "fr": "Affiche les appareils de votre compte Hubspace (Home Depot, cloud Afero) dans Gladys : lumières (marche/arrêt, luminosité, température de couleur, couleur), prises et interrupteurs, ventilateurs de plafond (marche, vitesse, sens), capteurs des extracteurs, et l'état des serrures et des programmateurs d'arrosage (commandes désactivées par défaut). Saisissez l'e-mail et le mot de passe de l'application Hubspace, enregistrez, puis ajoutez les appareils depuis l'onglet Découverte. Si Hubspace vous envoie un code par e-mail, saisissez-le avec les boutons ci-dessous. Lecture toutes les 60 secondes. API non officielle, jamais testée avec un vrai compte. Sans lien avec Hubspace, Home Depot ni Afero."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-hubspace/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-hubspace/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "email",
+      "type": "string",
+      "label": {
+        "en": "Hubspace e-mail",
+        "fr": "E-mail Hubspace"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.fr"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "password",
+      "type": "secret",
+      "label": {
+        "en": "Hubspace password",
+        "fr": "Mot de passe Hubspace"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again, sent only to the Hubspace sign-in page (accounts.hubspaceconnect.com).",
+        "fr": "Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement à la page de connexion Hubspace (accounts.hubspaceconnect.com)."
+      },
+      "required": true
     },
     {
-      "key": "unit",
+      "key": "poll_interval",
+      "type": "number",
+      "label": {
+        "en": "Refresh interval (s)",
+        "fr": "Intervalle de rafraîchissement (s)"
+      },
+      "description": {
+        "en": "Seconds between two reads of every device (30 to 60): one request each time.",
+        "fr": "Secondes entre deux lectures de tous les appareils (30 à 60) : une requête à chaque fois."
+      },
+      "required": false,
+      "default": 60,
+      "min": 30,
+      "max": 60
+    },
+    {
+      "key": "allow_unlock",
+      "type": "boolean",
+      "label": {
+        "en": "Allow unlocking the locks from Gladys",
+        "fr": "Autoriser le déverrouillage des serrures depuis Gladys"
+      },
+      "description": {
+        "en": "Off by default: the \"Unlock\" button of a lock is refused. Locking is always allowed.",
+        "fr": "Désactivé par défaut : le bouton « Déverrouiller » d'une serrure est refusé. Le verrouillage est toujours permis."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "allow_valve",
+      "type": "boolean",
+      "label": {
+        "en": "Allow the water valves (timers) from Gladys",
+        "fr": "Autoriser les vannes d'arrosage depuis Gladys"
+      },
+      "description": {
+        "en": "Off by default: the \"Open the valve\" and \"Close the valve\" buttons of a water timer are refused; its state is still shown.",
+        "fr": "Désactivé par défaut : les boutons « Ouvrir la vanne » et « Fermer la vanne » d'un programmateur sont refusés ; son état reste affiché."
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "language",
       "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Language of the feature names",
+        "fr": "Langue des noms des fonctionnalités"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Used for the feature names of the devices added from now on.",
+        "fr": "Sert aux noms des fonctionnalités des appareils ajoutés désormais."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "description": {
+        "en": "Signs in if needed and reads the devices once.",
+        "fr": "Se connecte si besoin et lit une fois les appareils."
+      },
+      "timeout_seconds": 60
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+      "key": "request_code",
+      "label": {
+        "en": "Send the verification code",
+        "fr": "Envoyer le code de vérification"
       },
+      "description": {
+        "en": "Step 1, only when Hubspace asks for a code: signs in again, and Hubspace e-mails a new code.",
+        "fr": "Étape 1, seulement si Hubspace demande un code : se reconnecte, et Hubspace envoie un nouveau code par e-mail."
+      },
+      "timeout_seconds": 60
+    },
+    {
+      "key": "verify_code",
+      "label": {
+        "en": "Verify the code",
+        "fr": "Vérifier le code"
+      },
+      "description": {
+        "en": "Step 2: type the code of the last Hubspace e-mail. The session is then kept: no code at the next restarts.",
+        "fr": "Étape 2 : saisissez le code du dernier e-mail de Hubspace. La session est ensuite gardée : pas de code aux redémarrages."
+      },
+      "timeout_seconds": 60,
       "fields": [
         {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
+          "key": "code",
           "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
+          "label": {
+            "en": "Code received",
+            "fr": "Code reçu"
+          },
+          "placeholder": {
+            "en": "123456",
+            "fr": "123456"
+          },
           "required": true
         }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
       ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

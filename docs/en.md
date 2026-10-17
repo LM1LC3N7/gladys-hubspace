@@ -1,61 +1,126 @@
-# Demo Devices Template
+# Hubspace for Gladys Assistant
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Shows and controls in Gladys the devices of your **Hubspace** account (Home
+Depot, Afero cloud): lights, plugs and switches, ceiling fans, bathroom
+exhaust-fan sensors, and the state of locks and water timers.
+
+> **Unofficial API, never tested with a real account.** The integration talks
+> to the API of the Hubspace app, which Hubspace does not document and may
+> change at any time. It was written from the aioafero library (the one of
+> the Home Assistant integration) and tested with made-up answers only. Not
+> affiliated with Hubspace, Home Depot or Afero.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+One Gladys device per supported Hubspace device:
 
-## Configuration
+| Hubspace device           | Gladys features                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Light, dimmer             | On/Off, Brightness, Colour temperature, Colour (as the bulb allows); one set per zone (e.g. `main` and `trim`) |
+| Plug, switch, transformer | On/Off (one per outlet or zone), Power (W) when the device gives it                                            |
+| Ceiling fan               | On/Off, Speed (%), Direction                                                                                   |
+| Exhaust fan               | Motion, Humidity above the threshold (read only)                                                               |
+| Lock                      | Lock state (read only), Lock and Unlock buttons, Battery                                                       |
+| Water timer               | Watering per spigot (1 = open, read only), Open the valve and Close the valve buttons, Battery                 |
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+The light of a ceiling fan is a device of its own (as in the app). The other
+Hubspace devices (thermostats, air conditioners, dehumidifiers, security
+system) are not shown yet. Garage doors are not handled by aioafero: not
+here either.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+### Locks and valves: off by default
 
-## Actions
+- **Locks**: the state is read only, the commands are buttons (never a
+  switch: an "everything off" from Gladys, a voice assistant or a scene
+  cannot reach them). **Lock** is always allowed; **Unlock** is refused while
+  _Allow unlocking the locks from Gladys_ is off (the default).
+- **Water timers**: **Open the valve** and **Close the valve** are refused
+  while _Allow the water valves (timers) from Gladys_ is off (the default);
+  the state is still shown.
+- Before every lock or valve command, the integration reads the state again
+  from Hubspace: nothing is sent when the device is offline, the state is
+  unknown or the lock is moving, and nothing is sent again when the device
+  already is in the wanted state.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## Setup
 
-## Scenes
+1. In Gladys, install the **Hubspace** integration from the store.
+2. Enter the **e-mail** and **password** of your Hubspace account (the ones
+   of the app), then save.
+3. If the status says a code was e-mailed, see below.
+4. Open the **Discovery** tab and add the devices.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+The password field is a `secret` field: Gladys keeps it in its database (in
+plain text, like every configuration value, and in its backups), never shows
+it again, and the integration sends it only to the Hubspace sign-in page
+(`accounts.hubspaceconnect.com`). It is used only for the first sign-in and
+when Hubspace refuses the refresh token: the rest of the time, the
+integration renews its session with that token.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+### Verification code (by e-mail)
 
-## Dashboard
+Hubspace may ask for a code sent by e-mail when signing in. Hubspace then
+sends the code at the sign-in, the integration stops and the status says so:
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+1. Under **Verify the code**, type the code of the last Hubspace e-mail and
+   click the button. "Code accepted" means connected.
+2. No e-mail, or the code is too old (more than 10 minutes)? Click **Send the
+   verification code**: the integration signs in again and Hubspace e-mails a
+   new code (at most once a minute).
+
+The session is then kept (in the integration's `/data`): no code at the next
+restarts. The integration never signs in again in a loop by itself: at most
+one automatic e-mail per incident.
+
+## Refresh
+
+Every device is read every **60 seconds** by default (30 to 60, _Refresh
+interval_), in **one request**. A command is sent at once; the value
+Hubspace confirms shows at once and is not undone by a read slightly behind
+(15 seconds).
+
+The commands of one device run one after the other. Gladys waits 5 seconds
+for the answer to a command: when Hubspace is too slow, the integration
+refuses the command **before sending it** rather than sending it after the
+failure is shown.
 
 ## Troubleshooting
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **E-mail or password refused**: the integration stops and waits, even
+  after a restart. Fix them, then save (or click _Test the connection_). It
+  never signs in again by itself after a refusal.
+- **Session refused**: the session is renewed once; refused again, the
+  integration pauses and tries again after 1 hour, 6 hours, then every
+  24 hours (kept across a restart). _Test the connection_ tries at once.
+- **Unknown sign-in page**: Hubspace asks for a step the integration does
+  not know (accept terms, change the password…): sign in once in the app,
+  then click _Test the connection_.
+- **Too many requests (429)**: a pause of 1 minute to 6 hours (Hubspace's
+  `Retry-After`, 10 minutes without it), for the reads, the commands and the
+  buttons, kept across a restart or a reconnection to Gladys. **HTTP 403**
+  from the sign-in page: one hour.
+- **Hubspace unavailable (5xx, network)**: new tries after 1, 2, 5, 10, then
+  every 15 minutes, never sooner than the interval.
+- A device offline for Hubspace is shown "unreachable" on its card.
+
+## Limits
+
+- Unofficial API: Hubspace may change it, block it or ask for more checks.
+- No live updates (the app's "Conclave" channel): one read every 30 to
+  60 seconds.
+- One Hubspace account per Gladys.
+- No light effects, timers or settings (LEDs, sensitivity, speaker…) in this
+  version.
+- Never tested with a real account: please report what you see on the
+  [GitHub repository](https://github.com/LM1LC3N7/gladys-hubspace/issues)
+  (without your e-mail, password or codes).
+
+## Privacy
+
+The integration keeps in `/data/hubspace-state.json` (readable by its own
+container only): the session tokens (refresh and access) and the Afero
+account id, the account they belong to as a hash of the e-mail, a sign-in
+waiting for its code (its cookies and parameters), when a code was last
+requested, the end of a 429 pause, and a stop on refused credentials tied to
+a salted fingerprint of the e-mail and password. Neither the e-mail nor the
+password. Nothing is sent anywhere but to Hubspace and Afero.
