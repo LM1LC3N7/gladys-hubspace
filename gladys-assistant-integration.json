@@ -6,8 +6,8 @@
     "en": "Hubspace (Home Depot) lights, plugs, switches and fans; lock and valve commands off by default.",
     "fr": "Hubspace (Home Depot) : lumières, prises, interrupteurs, ventilateurs ; serrures, arrosage."
   },
-  "version": "0.1.1",
-  "docker_image": "ghcr.io/lm1lc3n7/gladys-hubspace:0.1.1",
+  "version": "0.1.2",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-hubspace:0.1.2",
   "gladys_version": ">=5.1.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-hubspace/main/cover.png",
   "categories": ["lighting"],

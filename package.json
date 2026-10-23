@@ -1,6 +1,6 @@
 {
   "name": "gladys-hubspace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Hubspace (Home Depot, Afero cloud) for Gladys Assistant: lights, plugs and switches, ceiling fans, exhaust-fan sensors, locks and water timers (unlocking and valves off by default).",
   "type": "module",
