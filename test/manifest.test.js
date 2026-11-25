@@ -40,7 +40,10 @@ test('the store basics, and the version set by hand to 0.1.0 everywhere', () => 
   assert.equal(lock.packages[''].version, manifest.version);
   assert.deepEqual(manifest.transports, ['cloud']);
   assert.deepEqual(manifest.categories, ['lighting']);
-  assert.match(manifest.gladys_version, /^>=5\.1\.0$/);
+  // Hubspace is the Home Depot brand of the US and Canada; the catalog
+  // countries need Gladys 5.3.0.
+  assert.deepEqual(manifest.countries, ['US', 'CA']);
+  assert.match(manifest.gladys_version, /^>=5\.3\.0$/);
   for (const lang of ['en', 'fr']) {
     const length = manifest.description[lang].length;
     assert.ok(length >= 10 && length <= 100, `description.${lang}: ${length} characters`);
